@@ -26,6 +26,7 @@ import {
 import {
   generateJwtToken,
   hashPassword,
+  sendActivationEmail,
   sendResetEmail,
   verifyJwtToken,
   verifyPassword,
@@ -108,21 +109,6 @@ export const registerUser = async (req: Request, res: Response) => {
   const isSuperAdmin = req.body.userRole === Roles.SUPERADMIN;
   const isHr = req.body.userRole === Roles.ADMIN;
 
-  if (isSuperAdmin) {
-    const superAdminHasCreatedAnAccount = await User.findOne({
-      where: { tenantId: req.body.tenantId },
-    });
-
-    if (superAdminHasCreatedAnAccount) {
-      return res.status(400).json(
-        customResponse({
-          message: "Company already exists",
-          statusCode: 400,
-        })
-      );
-    }
-  }
-
   const checkUserRole = isSuperAdmin
     ? createSuperAdmin(req.body)
     : isHr
@@ -133,9 +119,11 @@ export const registerUser = async (req: Request, res: Response) => {
 
   return handleRequests({
     promise: checkUserRole,
-    message: checkUserType + " created successfully",
+    message:
+      checkUserType +
+      " created successfully, check your email to activate account",
     res,
-    resData: (data) => cleanUserData(data),
+    resData: (_) => null,
   });
 };
 
@@ -188,7 +176,9 @@ export const login = async (req: Request, res: Response) => {
   return handleRequests({
     promise: (async () => {
       const { email, password } = req.body;
-      const user = await findUserByEmail(email);
+      const user = await findUserByEmail(email.toLowerCase());
+      console.log({ user, email, password });
+
       if (!user || !(await verifyPassword(password, user.password))) {
         return res
           .status(400)
@@ -197,6 +187,19 @@ export const login = async (req: Request, res: Response) => {
           );
       }
 
+      console.log({
+        isPassMatch: await verifyPassword(password, user.password),
+      });
+
+      if (!user.isActive) {
+        await sendActivationEmail(user, false);
+        return res.status(400).json(
+          customResponse({
+            message: "Please check your mail to activate your account",
+            statusCode: 400,
+          })
+        );
+      }
       const token = generateJwtToken(user.id, user.tenantId, {
         expiresIn: "21d",
       });
@@ -283,8 +286,9 @@ export const getCurrentUser = async (req: Request, res: Response) => {
 
       return user;
     })(),
-    message: "User retrieved successfully",
+    message: null,
     res,
+    resData: (user) => cleanUserData(user as User),
   });
 };
 

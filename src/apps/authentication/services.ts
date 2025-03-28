@@ -22,18 +22,23 @@ export const verifyJwtToken = (token: string) => {
   return jwt.verify(token, JWT_SECRET) as TToken;
 };
 
-export const sendAccountVerificationEmail = async (user: User) => {
+export const sendActivationEmail = async (
+  user: User,
+  newUser: boolean = true
+) => {
   const activationToken = generateJwtToken(user.id || "", user.tenantId, {
-    expiresIn: "12h",
+    expiresIn: "1h",
   });
 
-  const activationLink = `${frontendUrl}/auth/activate?token=${activationToken}`;
+  const activationLink = `${frontendUrl}/auth/activate-account?token=${activationToken}`;
 
   const html = generateEmailTemplate({
-    title: "Welcome to E-Metrics Suite!",
+    title: newUser ? "Welcome to E-Metrics Suite!" : "Verify your account",
     message: `Hello ${
       cleanUserData(user).firstName || user.email.split(" ")[0]
-    }, click the button below to activate your account`,
+    }, ${
+      newUser ? "Welcome to E-Metrics Suite" : "Please verify your account"
+    }. Kindly click the button below to activate your account`,
     buttonText: "Activate Account",
     buttonLink: activationLink,
   });
@@ -72,5 +77,5 @@ export const verifyPassword = async (
   password: string,
   hash: string
 ): Promise<boolean> => {
-  return bcrypt.compare(password, hash);
+  return await bcrypt.compare(password, hash);
 };

@@ -1,8 +1,8 @@
+import { createTenantSchema } from "../../core/orm";
+import { generateUniqueTenantId } from "../../utils/generateTenantId";
 import { withTransaction } from "../../utils/withTransaction";
-import {
-  hashPassword,
-  sendAccountVerificationEmail,
-} from "../authentication/services";
+import { hashPassword, sendActivationEmail } from "../authentication/services";
+import Company from "../company/models";
 import User, { Roles, UserCreationAttributes } from "./models/user";
 
 export const findUserById = async (id: string, attributes?: string[]) => {
@@ -10,24 +10,38 @@ export const findUserById = async (id: string, attributes?: string[]) => {
 };
 
 export const findUserByEmail = async (email: string) => {
+  console.log({ email });
+
   return User.findOne({ where: { email } });
 };
 
 export const cleanUserData = (user: User) => {
   const [firstName, lastName] = user.name.split(" ");
-  return {
+  const isSuperAdmin = user.userRole === Roles.SUPERADMIN;
+  const isHr = user.userRole === Roles.ADMIN;
+  const isStaff = user.userRole === Roles.STAFF;
+
+  const cleanData = {
     id: user.id,
     name: user.name,
     firstName,
     lastName,
+    phoneNumber: user.phoneNumber,
     role: user.userRole,
     tenantId: user.tenantId,
     email: user.email,
+    isSuperAdmin,
+    isHr,
+    isStaff,
+    hasCompletedCompanyProfile: user.isNewRecord,
+    isNewUser: user.isNewRecord,
   };
+  return cleanData;
 };
 
 export const createUser = async (userData: UserCreationAttributes) => {
   if (!userData.email) throw new Error("Email is required");
+  if (!userData.password) throw new Error("Password is required");
 
   const hashedPassword = await hashPassword(userData.password);
 
@@ -41,8 +55,6 @@ export const createUser = async (userData: UserCreationAttributes) => {
       },
       { transaction }
     );
-
-    await sendAccountVerificationEmail(user);
 
     return user;
   });
@@ -64,11 +76,50 @@ export const createAdmin = async (userData: UserCreationAttributes) => {
   });
 };
 
-// Create a superuser
 export const createSuperAdmin = async (userData: UserCreationAttributes) => {
-  return createUser({
-    ...userData,
-    userRole: Roles.SUPERADMIN,
+  const tenantIdIfNone = userData.tenantId || (await generateUniqueTenantId());
+  const isSuperAdmin = userData.userRole === Roles.SUPERADMIN;
+
+  if (isSuperAdmin && userData.tenantId) {
+    const superAdminExists = await User.findOne({
+      where: { tenantId: userData.tenantId },
+    });
+
+    if (superAdminExists) {
+      throw new Error("Company already exists");
+    }
+  }
+
+  await createTenantSchema(tenantIdIfNone);
+
+  return await withTransaction(async (transaction) => {
+    const company = await Company.create(
+      {
+        id: tenantIdIfNone,
+        email: userData.email,
+        phoneNumber: userData.phoneNumber,
+      },
+      { transaction }
+    );
+
+    const newUser = await User.create(
+      {
+        ...userData,
+        tenantId: tenantIdIfNone,
+        userRole: Roles.SUPERADMIN,
+        isActive: true,
+        isStaff: true,
+      },
+      { transaction }
+    );
+
+    // 🔹 Update company ownerId safely
+    company.ownerId = newUser.id;
+    await company.save({ transaction });
+
+    await sendActivationEmail(newUser);
+
+    return newUser;
   });
 };
 

@@ -9,7 +9,7 @@ export interface AuthRequest extends Request {
 }
 
 export const authenticate = async (
-  req: AuthRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ) => {
@@ -23,13 +23,14 @@ export const authenticate = async (
     if (!user) throw new Error("No user found in request");
 
     req.user = user;
+    req.company = decoded.tenantId;
     next();
   } catch (error) {
     debugLog(error);
 
-    res.status(401).json(
+    return res.status(401).json(
       customResponse({
-        message: (error as Error)?.message || "",
+        message: (error as Error)?.message || "Authentication failed",
         data: error,
         statusCode: 401,
       })
